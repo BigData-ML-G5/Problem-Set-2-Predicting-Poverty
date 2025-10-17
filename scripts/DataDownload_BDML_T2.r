@@ -286,8 +286,115 @@ test_personas <- test_personas %>% mutate(bin_headFemale = bin_head*(1-sexo))
 train_personas <- train_personas %>% mutate(Edad2 = Edad*Edad)
 test_personas <- train_personas %>% mutate(Edad2 = Edad*Edad)
 
-# Apply filters to the first base
-db <- db %>% filter(total_horas_trabajadas>0) %>% filter(age>17)
+train_hogares <- train_hogares |> 
+  mutate(Pobre_hand = ifelse(Ingpcug < Lp, 1, 0),
+         Pobre_hand_2 = ifelse(Ingtotugarr < Lp*Npersug, 1, 0))
+
+pre_process_personas <- function(data) {
+  data |> 
+    mutate(
+      bin_woman   = ifelse(sexo == 2, 1, 0),
+      bin_head    = ifelse(parentesco_jefe_hogar == 1, 1, 0),
+      bin_minor   = ifelse(Edad <= 6, 1, 0),
+      cat_educ    = ifelse(nivel_educativo == 9, 0, nivel_educativo),
+      bin_occupied = ifelse(is.na(Oc), 0, 1)
+    ) |> 
+    select(id, Orden, bin_woman, bin_head, bin_minor, cat_educ, bin_occupied)
+}
+
+train_personas <- pre_process_personas(train_personas)
+test_personas  <- pre_process_personas(test_personas)
+
+# ------------------------
+# Household aggregates
+# ------------------------
+# Training
+train_personas_nivel_hogar <- train_personas |> 
+  group_by(id) |>
+  summarize(
+    num_women    = sum(bin_woman, na.rm = TRUE),
+    num_minors   = sum(bin_minor, na.rm = TRUE),
+    cat_maxEduc  = max(cat_educ, na.rm = TRUE),
+    num_occupied = sum(bin_occupied, na.rm = TRUE),
+    mean_educ    = mean(cat_educ, na.rm = TRUE),
+    dep_ratio    = ifelse(num_occupied > 0, n() / num_occupied, n())
+  ) |> 
+  ungroup()
+
+train_personas_hogar <- train_personas |> 
+  filter(bin_head == 1) |>
+  select(id, bin_woman, cat_educ, bin_occupied) |>
+  rename(
+    bin_headWoman    = bin_woman,
+    cat_educHead     = cat_educ,
+    bin_occupiedHead = bin_occupied
+  ) |>
+  left_join(train_personas_nivel_hogar, by = "id")
+
+# Test
+test_personas_nivel_hogar <- test_personas |> 
+  group_by(id) |>
+  summarize(
+    num_women    = sum(bin_woman, na.rm = TRUE),
+    num_minors   = sum(bin_minor, na.rm = TRUE),
+    cat_maxEduc  = max(cat_educ, na.rm = TRUE),
+    num_occupied = sum(bin_occupied, na.rm = TRUE),
+    mean_educ    = mean(cat_educ, na.rm = TRUE),
+    dep_ratio    = ifelse(num_occupied > 0, n() / num_occupied, n())
+  ) |> 
+  ungroup()
+
+test_personas_hogar <- test_personas |> 
+  filter(bin_head == 1) |>
+  select(id, bin_woman, cat_educ, bin_occupied) |>
+  rename(
+    bin_headWoman    = bin_woman,
+    cat_educHead     = cat_educ,
+    bin_occupiedHead = bin_occupied
+  ) |>
+  left_join(test_personas_nivel_hogar, by = "id")
+
+# ------------------------
+# Economic variables
+# ------------------------
+train_hogares <- train_hogares |> 
+  mutate(
+    bin_rent = ifelse(tipo_propiedad == 3, 1, 0),
+    Ingpcug  = numero_cuartos_hogar / Npersug,
+    IPR      = Ingpcug / Lp
+  ) |> 
+  select(id, Dominio, bin_rent, Ingpcug, IPR, Pobre)
+
+test_hogares <- test_hogares |> 
+  mutate(
+    bin_rent = ifelse(tipo_propiedad == 3, 1, 0),
+    Ingpcug  = numero_cuartos_hogar / Npersug,
+    IPR      = Ingpcug / Lp
+  ) |> 
+  select(id, Dominio, bin_rent, Ingpcug, IPR)
+
+# ------------------------
+# Merge data
+# ------------------------
+train <- train_hogares |> 
+  left_join(train_personas_hogar, by = "id") |>
+  select(-id) |> 
+  mutate(
+    Pobre   = factor(Pobre, levels = c(0, 1), labels = c("No", "Yes")),
+    Dominio = factor(Dominio),
+    cat_educHead = factor(cat_educHead, levels = c(0:6),
+                          labels = c("No information", "None", "Preschool", "Primary",
+                                     "Secondary", "High school", "University"))
+  )
+
+test <- test_hogares |> 
+  left_join(test_personas_hogar, by = "id") |> 
+  mutate(
+    Dominio = factor(Dominio),
+    cat_educHead = factor(cat_educHead, levels = c(0:6),
+                          labels = c("No information", "None", "Preschool", "Primary",
+                                     "Secondary", "High school", "University"))
+  )
 
 ## -----------------------------------------------------
 ## 4) Missing Values
@@ -339,6 +446,15 @@ test_personas <- test_personas %>%
   mutate(log_Ingtotes = log(Ingtotes)) %>%
   mutate(log_Ingtotob = log(Ingtotob)) 
 
+## -----------------------------------------------------
+## 5) Export CSV
+## -----------------------------------------------------
+setwd("~/Desktop/GitHub/Problem-Set-2-Predicting-Poverty/data")
 
-
+# Exportar cada dataset
+write.csv(train, "train_clean.csv", row.names = FALSE)
+write.csv(train_hogares, "train_hogares_clean.csv", row.names = FALSE)
+write.csv(train_personas, "train_personas_clean.csv", row.names = FALSE)
+write.csv(train_personas_hogar, "train_personas_hogar_clean.csv", row.names = FALSE)
+write.csv(train_personas_nivel_hogar, "train_personas_nivel_hogar_clean.csv", row.names = FALSE)
 

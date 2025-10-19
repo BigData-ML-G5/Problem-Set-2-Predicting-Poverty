@@ -246,45 +246,19 @@ test_hogares <- renombrar_columnas(test_hogares, dictionary)
 ## -----------------------------------------------------
 ## 3) Create new variables
 ## -----------------------------------------------------
-#Remove Bogotá
-# Para train_personas
+# Remove Bogotá
 if ("Dominio" %in% names(train_personas)) {
   train_personas <- train_personas[train_personas$Dominio != "BOGOTA", ]
 }
-
-# Para test_hogares
 if ("Dominio" %in% names(test_hogares)) {
   test_hogares <- test_hogares[test_hogares$Dominio != "BOGOTA", ]
 }
-
-# Para test_personas
 if ("Dominio" %in% names(test_personas)) {
   test_personas <- test_personas[test_personas$Dominio != "BOGOTA", ]
 }
-
-# Para train_hogares
 if ("Dominio" %in% names(train_hogares)) {
   train_hogares <- train_hogares[train_hogares$Dominio != "BOGOTA", ]
 }
-
-#Age is only present in the "personas" database
-#Create a variable number of minors
-train_personas <- train_personas %>%
-  mutate(bin_minor = ifelse(test = Edad <= 18, yes = 1, no = 0))
-test_personas <- test_personas %>%
-  mutate(bin_minor = ifelse(test = Edad <= 18, yes = 1, no = 0))
-
-#Create a variable to identify the household head
-train_personas <- train_personas %>% mutate(bin_head = ifelse(test = parentesco_jefe_hogar == 1, yes = 1, no = 0))
-test_personas <- train_personas %>% mutate(bin_head = ifelse(test = parentesco_jefe_hogar == 1, yes = 1, no = 0))
-
-#Create a variable to identify if the household head is female
-train_personas <- train_personas %>% mutate(bin_headFemale = bin_head*(1-sexo))
-test_personas <- test_personas %>% mutate(bin_headFemale = bin_head*(1-sexo))
-
-#Create age squared
-train_personas <- train_personas %>% mutate(Edad2 = Edad*Edad)
-test_personas <- train_personas %>% mutate(Edad2 = Edad*Edad)
 
 train_hogares <- train_hogares |> 
   mutate(Pobre_hand = ifelse(Ingpcug < Lp, 1, 0),
@@ -296,67 +270,159 @@ pre_process_personas <- function(data) {
       bin_woman   = ifelse(sexo == 2, 1, 0),
       bin_head    = ifelse(parentesco_jefe_hogar == 1, 1, 0),
       bin_minor   = ifelse(Edad <= 6, 1, 0),
-      cat_educ    = ifelse(nivel_educativo == 9, 0, nivel_educativo),
-      bin_occupied = ifelse(is.na(Oc), 0, 1)
-    ) |> 
-    select(id, Orden, bin_woman, bin_head, bin_minor, cat_educ, bin_occupied)
+      bin_minor18 = ifelse(Edad <= 18, 1, 0),
+      cat_educ    = ifelse(is.na(nivel_educativo) | nivel_educativo == 9, 0, nivel_educativo),
+      
+      bin_occupied = case_when(
+        !is.na(Oc) & Oc == 1 ~ 1,
+        !is.na(Oc) & Oc != 1 ~ 0,
+        !is.na(actividad_semana_pasada) & actividad_semana_pasada == 1 ~ 1,
+        TRUE ~ 0
+      ),
+      
+      Edad2 = Edad * Edad,
+      bin_edad_productiva = ifelse(Edad >= 15 & Edad <= 64, 1, 0),
+      bin_adulto_mayor = ifelse(Edad >= 65, 1, 0),
+      bin_educ_superior = ifelse(!is.na(nivel_educativo) & nivel_educativo >= 5, 1, 0),
+      experiencia_potencial = pmax(0, Edad - cat_educ - 6),
+      
+      bin_trabajador_formal = case_when(
+        bin_occupied == 1 & !is.na(afiliado_seguridad_social) & afiliado_seguridad_social == 1 ~ 1,
+        TRUE ~ 0
+      ),
+      
+      bin_jefa_hogar = bin_head * bin_woman,
+      
+      bin_subempleo_horas = case_when(
+        bin_occupied == 1 & 
+          !is.na(horas_trabajadas_semanalmente) & 
+          horas_trabajadas_semanalmente < 30 ~ 1,
+        TRUE ~ 0
+      ),
+      
+      bin_quiere_mas_horas = case_when(
+        !is.na(quiere_trabajar_mas_horas) & quiere_trabajar_mas_horas == 1 ~ 1,
+        TRUE ~ 0
+      ),
+      
+      intensidad_laboral = case_when(
+        !is.na(horas_trabajadas_semanalmente) ~ pmin(horas_trabajadas_semanalmente / 48, 1),
+        TRUE ~ 0
+      ),
+      
+      bin_segundo_trabajo = case_when(
+        !is.na(tiene_segundo_trabajo) & tiene_segundo_trabajo == 1 ~ 1,
+        TRUE ~ 0
+      ),
+      
+      bin_empresa_grande = case_when(
+        !is.na(tamano_empresa) & tamano_empresa >= 3 ~ 1,
+        TRUE ~ 0
+      )
+    )
 }
 
 train_personas <- pre_process_personas(train_personas)
 test_personas  <- pre_process_personas(test_personas)
 
-# ------------------------
-# Household aggregates
-# ------------------------
-# Training
 train_personas_nivel_hogar <- train_personas |> 
   group_by(id) |>
   summarize(
+    num_personas = n(),
     num_women    = sum(bin_woman, na.rm = TRUE),
     num_minors   = sum(bin_minor, na.rm = TRUE),
+    num_minors18 = sum(bin_minor18, na.rm = TRUE),
+    num_adultos_mayores = sum(bin_adulto_mayor, na.rm = TRUE),
+    num_edad_productiva = sum(bin_edad_productiva, na.rm = TRUE),
     cat_maxEduc  = max(cat_educ, na.rm = TRUE),
     num_occupied = sum(bin_occupied, na.rm = TRUE),
+    num_formal   = sum(bin_trabajador_formal, na.rm = TRUE),
+    num_educ_superior = sum(bin_educ_superior, na.rm = TRUE),
+    num_subempleo = sum(bin_subempleo_horas, na.rm = TRUE),
+    num_quiere_mas_horas = sum(bin_quiere_mas_horas, na.rm = TRUE),
+    num_segundo_trabajo = sum(bin_segundo_trabajo, na.rm = TRUE),
+    num_empresa_grande = sum(bin_empresa_grande, na.rm = TRUE),
     mean_educ    = mean(cat_educ, na.rm = TRUE),
-    dep_ratio    = ifelse(num_occupied > 0, n() / num_occupied, n())
-  ) |> 
-  ungroup()
+    mean_experiencia = mean(experiencia_potencial, na.rm = TRUE),
+    mean_intensidad_laboral = mean(intensidad_laboral, na.rm = TRUE),
+    .groups = 'drop'
+  )
 
 train_personas_hogar <- train_personas |> 
   filter(bin_head == 1) |>
-  select(id, bin_woman, cat_educ, bin_occupied) |>
+  select(id, bin_woman, cat_educ, bin_occupied, Edad, Edad2,
+         bin_trabajador_formal, bin_educ_superior, experiencia_potencial,
+         bin_jefa_hogar, bin_adulto_mayor, bin_edad_productiva,
+         bin_subempleo_horas, bin_quiere_mas_horas, intensidad_laboral,
+         bin_segundo_trabajo, bin_empresa_grande) |>
   rename(
-    bin_headWoman    = bin_woman,
-    cat_educHead     = cat_educ,
-    bin_occupiedHead = bin_occupied
+    bin_headWoman = bin_woman,
+    cat_educHead = cat_educ,
+    bin_occupiedHead = bin_occupied,
+    edad_head = Edad,
+    edad2_head = Edad2,
+    bin_formalHead = bin_trabajador_formal,
+    bin_educSuperiorHead = bin_educ_superior,
+    experiencia_head = experiencia_potencial,
+    bin_adulto_mayor_head = bin_adulto_mayor,
+    bin_edad_productiva_head = bin_edad_productiva,
+    bin_subempleo_head = bin_subempleo_horas,
+    bin_quiere_mas_horas_head = bin_quiere_mas_horas,
+    intensidad_laboral_head = intensidad_laboral,
+    bin_segundo_trabajo_head = bin_segundo_trabajo,
+    bin_empresa_grande_head = bin_empresa_grande
   ) |>
   left_join(train_personas_nivel_hogar, by = "id")
 
-# Test
 test_personas_nivel_hogar <- test_personas |> 
   group_by(id) |>
   summarize(
+    num_personas = n(),
     num_women    = sum(bin_woman, na.rm = TRUE),
     num_minors   = sum(bin_minor, na.rm = TRUE),
+    num_minors18 = sum(bin_minor18, na.rm = TRUE),
+    num_adultos_mayores = sum(bin_adulto_mayor, na.rm = TRUE),
+    num_edad_productiva = sum(bin_edad_productiva, na.rm = TRUE),
     cat_maxEduc  = max(cat_educ, na.rm = TRUE),
     num_occupied = sum(bin_occupied, na.rm = TRUE),
+    num_formal   = sum(bin_trabajador_formal, na.rm = TRUE),
+    num_educ_superior = sum(bin_educ_superior, na.rm = TRUE),
+    num_subempleo = sum(bin_subempleo_horas, na.rm = TRUE),
+    num_quiere_mas_horas = sum(bin_quiere_mas_horas, na.rm = TRUE),
+    num_segundo_trabajo = sum(bin_segundo_trabajo, na.rm = TRUE),
+    num_empresa_grande = sum(bin_empresa_grande, na.rm = TRUE),
     mean_educ    = mean(cat_educ, na.rm = TRUE),
-    dep_ratio    = ifelse(num_occupied > 0, n() / num_occupied, n())
-  ) |> 
-  ungroup()
+    mean_experiencia = mean(experiencia_potencial, na.rm = TRUE),
+    mean_intensidad_laboral = mean(intensidad_laboral, na.rm = TRUE),
+    .groups = 'drop'
+  )
 
 test_personas_hogar <- test_personas |> 
   filter(bin_head == 1) |>
-  select(id, bin_woman, cat_educ, bin_occupied) |>
+  select(id, bin_woman, cat_educ, bin_occupied, Edad, Edad2,
+         bin_trabajador_formal, bin_educ_superior, experiencia_potencial,
+         bin_jefa_hogar, bin_adulto_mayor, bin_edad_productiva,
+         bin_subempleo_horas, bin_quiere_mas_horas, intensidad_laboral,
+         bin_segundo_trabajo, bin_empresa_grande) |>
   rename(
-    bin_headWoman    = bin_woman,
-    cat_educHead     = cat_educ,
-    bin_occupiedHead = bin_occupied
+    bin_headWoman = bin_woman,
+    cat_educHead = cat_educ,
+    bin_occupiedHead = bin_occupied,
+    edad_head = Edad,
+    edad2_head = Edad2,
+    bin_formalHead = bin_trabajador_formal,
+    bin_educSuperiorHead = bin_educ_superior,
+    experiencia_head = experiencia_potencial,
+    bin_adulto_mayor_head = bin_adulto_mayor,
+    bin_edad_productiva_head = bin_edad_productiva,
+    bin_subempleo_head = bin_subempleo_horas,
+    bin_quiere_mas_horas_head = bin_quiere_mas_horas,
+    intensidad_laboral_head = intensidad_laboral,
+    bin_segundo_trabajo_head = bin_segundo_trabajo,
+    bin_empresa_grande_head = bin_empresa_grande
   ) |>
   left_join(test_personas_nivel_hogar, by = "id")
 
-# ------------------------
-# Economic variables
-# ------------------------
 train_hogares <- train_hogares |> 
   mutate(
     bin_rent = ifelse(tipo_propiedad == 3, 1, 0),
@@ -373,9 +439,61 @@ test_hogares <- test_hogares |>
   ) |> 
   select(id, Dominio, bin_rent, Ingpcug, IPR)
 
-# ------------------------
-# Merge data
-# ------------------------
+# Variables demográficas:
+# bin_minor18: Persona menor de 18 años (vs bin_minor que era ≤6)
+# bin_edad_productiva: Persona entre 15-64 años (edad laboral activa)
+# bin_adulto_mayor: Persona ≥65 años 
+
+# Variables laborales:
+# bin_segundo_trabajo: Persona tiene segundo trabajo (diversificación de ingresos)
+# bin_empresa_grande: Trabaja en empresa grande (≥3 empleados, mejor calidad empleo)
+# bin_subempleo_horas: Trabaja <30 horas semanales
+# bin_quiere_mas_horas: Quiere trabajar más horas 
+# intensidad_laboral: Ratio horas trabajadas/48 horas (dedicación laboral)
+
+# VARIABLES AGREGADAS A NIVEL HOGAR (por cada hogar)
+# num_personas: Total personas en el hogar
+# num_adultos_mayores: Cuántos adultos mayores (dependientes)
+# num_edad_productiva: Cuántos en edad de trabajar
+# num_subempleo: Cuántos en subempleo por horas
+# num_quiere_mas_horas: Cuántos quieren más horas
+# num_segundo_trabajo: Cuántos tienen segundo trabajo
+# num_empresa_grande: Cuántos trabajan en empresas grandes
+
+# Promedios del hogar:
+# mean_experiencia: Experiencia laboral promedio del hogar
+# mean_intensidad_laboral: Intensidad laboral promedio
+
+# VARIABLES DEL JEFE DE HOGAR NUEVAS
+# Demográficas del jefe:
+# edad_head: Edad del jefe de hogar
+# edad2_head: Edad al cuadrado (efectos no lineales)
+
+# Laborales del jefe:
+# bin_subempleo_head: Jefe en subempleo por horas
+# bin_quiere_mas_horas_head: Jefe quiere más horas
+# intensidad_laboral_head: Intensidad laboral del jefe
+# bin_segundo_trabajo_head: Jefe tiene segundo trabajo
+# bin_empresa_grande_head: Jefe trabaja en empresa grande
+
+# INTERACCIONES ECONÓMICAS PARA PREDICCIÓN DE POBREZA:
+# dep_burden: Carga total de dependientes (menores + adultos mayores)
+# minors_per_worker: Menores por trabajador (carga económica específica)
+# dependents_per_worker: Dependientes totales por trabajador
+# head_female_with_minors: Jefa de hogar con menores (doble vulnerabilidad)
+# head_educ_times_workers: Educación del jefe multiplicada por trabajadores
+# subempleo_household_size: Subempleo amplificado por tamaño del hogar
+# head_subempleo_with_minors: Jefe en subempleo con menores a cargo
+# need_hours_household_size: Necesidad de horas amplificada por tamaño
+# formal_employment_depth: Profundidad del empleo formal
+# head_educ_formal: Jefe educado y formal (protección)
+# head_age_with_minors: Edad del jefe con responsabilidad de menores
+# vulnerable_head: Jefa en subempleo (máxima vulnerabilidad)
+# household_productivity: Productividad del hogar (educados trabajando)
+# elderly_burden_workers: Carga de adultos mayores por trabajador
+# diversification_strength: Fortaleza por diversificación laboral
+# quality_employment: Empleo de calidad (empresa grande y formal)
+
 train <- train_hogares |> 
   left_join(train_personas_hogar, by = "id") |>
   select(-id) |> 
@@ -384,7 +502,24 @@ train <- train_hogares |>
     Dominio = factor(Dominio),
     cat_educHead = factor(cat_educHead, levels = c(0:6),
                           labels = c("No information", "None", "Preschool", "Primary",
-                                     "Secondary", "High school", "University"))
+                                     "Secondary", "High school", "University")),
+    
+    dep_burden = num_minors + num_adultos_mayores,
+    minors_per_worker = ifelse(num_occupied > 0, num_minors / num_occupied, num_minors),
+    dependents_per_worker = ifelse(num_occupied > 0, dep_burden / num_occupied, dep_burden),
+    head_female_with_minors = bin_headWoman * num_minors,
+    head_educ_times_workers = as.numeric(cat_educHead) * num_occupied,
+    subempleo_household_size = num_subempleo * num_personas,
+    head_subempleo_with_minors = bin_subempleo_head * num_minors,
+    need_hours_household_size = num_quiere_mas_horas * num_personas,
+    formal_employment_depth = num_formal * num_occupied,
+    head_educ_formal = bin_educSuperiorHead * bin_formalHead,
+    head_age_with_minors = edad_head * num_minors,
+    vulnerable_head = bin_headWoman * bin_subempleo_head,
+    household_productivity = num_educ_superior * num_occupied,
+    elderly_burden_workers = num_adultos_mayores * ifelse(num_occupied > 0, 1/num_occupied, 1),
+    diversification_strength = num_segundo_trabajo * num_occupied,
+    quality_employment = num_empresa_grande * num_formal
   )
 
 test <- test_hogares |> 
@@ -393,48 +528,29 @@ test <- test_hogares |>
     Dominio = factor(Dominio),
     cat_educHead = factor(cat_educHead, levels = c(0:6),
                           labels = c("No information", "None", "Preschool", "Primary",
-                                     "Secondary", "High school", "University"))
+                                     "Secondary", "High school", "University")),
+    
+    dep_burden = num_minors + num_adultos_mayores,
+    minors_per_worker = ifelse(num_occupied > 0, num_minors / num_occupied, num_minors),
+    dependents_per_worker = ifelse(num_occupied > 0, dep_burden / num_occupied, dep_burden),
+    head_female_with_minors = bin_headWoman * num_minors,
+    head_educ_times_workers = as.numeric(cat_educHead) * num_occupied,
+    subempleo_household_size = num_subempleo * num_personas,
+    head_subempleo_with_minors = bin_subempleo_head * num_minors,
+    need_hours_household_size = num_quiere_mas_horas * num_personas,
+    formal_employment_depth = num_formal * num_occupied,
+    head_educ_formal = bin_educSuperiorHead * bin_formalHead,
+    head_age_with_minors = edad_head * num_minors,
+    vulnerable_head = bin_headWoman * bin_subempleo_head,
+    household_productivity = num_educ_superior * num_occupied,
+    elderly_burden_workers = num_adultos_mayores * ifelse(num_occupied > 0, 1/num_occupied, 1),
+    diversification_strength = num_segundo_trabajo * num_occupied,
+    quality_employment = num_empresa_grande * num_formal
   )
 
 ## -----------------------------------------------------
-## 4) Missing Values
+## 5) As Factor
 ## -----------------------------------------------------
-#skim the number of missing values 1
-db_miss_personas_train <- skim(train_personas) %>% select(skim_variable, n_missing)
-#view missing values as percentage
-nobs <- nrow(db_miss_personas_train) # number of observations
-db_miss_personas_train<- db_miss_personas_train %>% mutate(p_missing= n_missing/nobs) # new variable of number of NA
-db_miss_personas_train <- db_miss_personas_train %>% arrange(-n_missing) # descendant order
-db_miss_personas_train<- db_miss_personas_train %>% filter(n_missing!= 0) # keep only NA
-head(db_miss_personas_train, 10) # Show the 10 first observations
-
-#skim the number of missing values 2
-db_miss_personas_test <- skim(test_personas) %>% select(skim_variable, n_missing)
-nobs_test <- nrow(test_personas)
-db_miss_personas_test <- db_miss_personas_test %>% 
-  mutate(p_missing = n_missing/nobs_test) %>% 
-  arrange(-n_missing) %>% 
-  filter(n_missing != 0)
-head(db_miss_personas_test, 10)
-
-#skim the number of missing values 3
-db_miss_hogares_train <- skim(train_hogares) %>% select(skim_variable, n_missing)
-nobs_train_hogares <- nrow(train_hogares)
-db_miss_hogares_train <- db_miss_hogares_train %>% 
-  mutate(p_missing = n_missing/nobs_train_hogares) %>% 
-  arrange(-n_missing) %>% 
-  filter(n_missing != 0)
-head(db_miss_hogares_train, 10)
-
-#skim the number of missing values 4
-db_miss_hogares_test <- skim(test_hogares) %>% select(skim_variable, n_missing)
-nobs_test_hogares <- nrow(test_hogares)
-db_miss_hogares_test <- db_miss_hogares_test %>% 
-  mutate(p_missing = n_missing/nobs_test_hogares) %>% 
-  arrange(-n_missing) %>% 
-  filter(n_missing != 0)
-head(db_miss_hogares_test, 10)
-
 # Variables as.factor
 test_personas <- test_personas %>%
   mutate(Estrato1 = as.factor(Estrato1)) %>%
@@ -447,7 +563,7 @@ test_personas <- test_personas %>%
   mutate(log_Ingtotob = log(Ingtotob)) 
 
 ## -----------------------------------------------------
-## 5) Export CSV
+## 6) Export CSV
 ## -----------------------------------------------------
 setwd("~/Desktop/GitHub/Problem-Set-2-Predicting-Poverty/data")
 

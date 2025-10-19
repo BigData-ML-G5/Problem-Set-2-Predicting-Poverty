@@ -12,7 +12,8 @@ p_load(tidyverse,
        caret,
        readr,
        dplyr,
-       skimr
+       skimr,
+       caret
 )
 
 ## -----------------------------------------------------
@@ -548,19 +549,75 @@ test <- test_hogares |>
     quality_employment = num_empresa_grande * num_formal
   )
 
+colSums(is.na(train))
+colSums(is.na(test))
+
 ## -----------------------------------------------------
 ## 5) As Factor
 ## -----------------------------------------------------
 # Variables as.factor
-test_personas <- test_personas %>%
-  mutate(Estrato1 = as.factor(Estrato1)) %>%
-  mutate(sexo = as.factor(sexo)) %>%
-  mutate(nivel_educativo = as.factor(nivel_educativo)) %>%
-  mutate(Oficio = as.factor(Oficio)) %>%
-  mutate(log_ingreso_trabajo_principal = log(ingreso_trabajo_principal))%>%
-  mutate(log_Ingtot = log(Ingtot))  %>%
-  mutate(log_Ingtotes = log(Ingtotes)) %>%
-  mutate(log_Ingtotob = log(Ingtotob)) 
+train <- train |> 
+  mutate(
+    bin_rent = as.factor(bin_rent),
+    bin_headWoman = as.factor(bin_headWoman), 
+    bin_occupiedHead = as.factor(bin_occupiedHead),
+    bin_formalHead = as.factor(bin_formalHead),
+    bin_educSuperiorHead = as.factor(bin_educSuperiorHead),
+    bin_jefa_hogar = as.factor(bin_jefa_hogar),
+    bin_adulto_mayor_head = as.factor(bin_adulto_mayor_head),
+    bin_edad_productiva_head = as.factor(bin_edad_productiva_head),
+    bin_subempleo_head = as.factor(bin_subempleo_head),
+    bin_quiere_mas_horas_head = as.factor(bin_quiere_mas_horas_head),
+    bin_segundo_trabajo_head = as.factor(bin_segundo_trabajo_head),
+    bin_empresa_grande_head = as.factor(bin_empresa_grande_head),
+    head_educ_formal = as.factor(head_educ_formal),
+    vulnerable_head = as.factor(vulnerable_head)
+  )
+
+test <- test |> 
+  mutate(
+    bin_rent = as.factor(bin_rent),
+    bin_headWoman = as.factor(bin_headWoman), 
+    bin_occupiedHead = as.factor(bin_occupiedHead),
+    bin_formalHead = as.factor(bin_formalHead),
+    bin_educSuperiorHead = as.factor(bin_educSuperiorHead),
+    bin_jefa_hogar = as.factor(bin_jefa_hogar),
+    bin_adulto_mayor_head = as.factor(bin_adulto_mayor_head),
+    bin_edad_productiva_head = as.factor(bin_edad_productiva_head),
+    bin_subempleo_head = as.factor(bin_subempleo_head),
+    bin_quiere_mas_horas_head = as.factor(bin_quiere_mas_horas_head),
+    bin_segundo_trabajo_head = as.factor(bin_segundo_trabajo_head),
+    bin_empresa_grande_head = as.factor(bin_empresa_grande_head),
+    head_educ_formal = as.factor(head_educ_formal),
+    vulnerable_head = as.factor(vulnerable_head)
+  )
+## -----------------------------------------------------
+## 6) Standirize
+## -----------------------------------------------------
+# Variables to standardize as they are not categorical
+variables_to_standardize <- c(
+  "Ingpcug", 
+  "IPR",
+  "edad_head", 
+  "edad2_head",
+  "experiencia_head",
+  "num_personas", "num_women", "num_minors", "num_minors18",
+  "num_adultos_mayores", "num_edad_productiva", "num_occupied", 
+  "num_formal", "num_educ_superior", "num_subempleo",
+  "num_quiere_mas_horas", "num_segundo_trabajo", "num_empresa_grande",
+  "mean_experiencia",
+  "dep_burden",
+  "head_female_with_minors", "head_educ_times_workers",
+  "subempleo_household_size", "head_subempleo_with_minors",
+  "need_hours_household_size", "formal_employment_depth",
+  "head_age_with_minors", "household_productivity",
+  "diversification_strength", "quality_employment",
+  "minors_per_worker", "dependents_per_worker", "elderly_burden_workers"
+)
+
+preprocess_params <- preProcess(train[variables_to_standardize], method = c("center", "scale"))
+train[variables_to_standardize] <- predict(preprocess_params, train[variables_to_standardize])
+test[variables_to_standardize] <- predict(preprocess_params, test[variables_to_standardize])
 
 ## -----------------------------------------------------
 ## 6) Export CSV
@@ -569,8 +626,5 @@ setwd("~/Desktop/GitHub/Problem-Set-2-Predicting-Poverty/data")
 
 # Exportar cada dataset
 write.csv(train, "train_clean.csv", row.names = FALSE)
-write.csv(train_hogares, "train_hogares_clean.csv", row.names = FALSE)
-write.csv(train_personas, "train_personas_clean.csv", row.names = FALSE)
-write.csv(train_personas_hogar, "train_personas_hogar_clean.csv", row.names = FALSE)
-write.csv(train_personas_nivel_hogar, "train_personas_nivel_hogar_clean.csv", row.names = FALSE)
+write.csv(test, "test_clean.csv", row.names = FALSE)
 

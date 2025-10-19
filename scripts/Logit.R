@@ -1,7 +1,7 @@
 # =======================================================
 # Poverty Prediction in Colombia — LOGIT Model (caret)
 # Date: 2025-10-19
-# Description: Logistic regression with 10-fold CV optimizing F1 via
+# Description: Logistic regression with 10-fold CV optimizing F1
 # =======================================================
 
 # ------------------------

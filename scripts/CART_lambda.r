@@ -8,7 +8,7 @@
 # 1. Load required libraries
 # ------------------------
 require("pacman")
-p_load(tidyverse, caret, rpart, rpart.plot, MLmetrics, Metrics)
+p_load(tidyverse, caret, rpart, rpart.plot, MLmetrics, Metrics, DMwR)
 
 
 # ------------------------
@@ -21,152 +21,9 @@ train_personas <- read.csv(unz("data/train_personas.csv.zip", "train_personas.cs
 test_hogares   <- read.csv("data/test_hogares.csv")
 test_personas  <- read.csv(unz("data/test_personas.csv.zip", "test_personas.csv"))   # Read from zip file
 
-# ------------------------
-# 3. Poverty variables
-# ------------------------
-# The poverty line (Lp) is used to construct a binary poverty indicator.
-train_hogares <- train_hogares |> 
-  mutate(Pobre_hand = ifelse(Ingpcug < Lp, 1, 0),
-         Pobre_hand_2 = ifelse(Ingtotugarr < Lp*Npersug, 1, 0))
-
-# Compare official poverty variable (DANE) vs. manually computed one
-table(train_hogares$Pobre, train_hogares$Pobre_hand)
-table(train_hogares$Pobre, train_hogares$Pobre_hand_2)
 
 # =====================================================
-# 4. Individual-level preprocessing
-# =====================================================
-# This function creates binary and categorical variables at the individual level:
-# - bin_woman: 1 if female (P6020 == 2)
-# - bin_head: 1 if head of household (P6050 == 1)
-# - bin_minor: 1 if child under 6 years old (P6040 <= 6)
-# - cat_educ: education level (replaces 9 = missing with 0)
-# - bin_occupied: 1 if employed (variable Oc is not NA)
-
-pre_process_personas <- function(data) {
-  data |> 
-    mutate(
-      bin_woman   = ifelse(P6020 == 2, 1, 0),
-      bin_head    = ifelse(P6050 == 1, 1, 0),
-      bin_minor   = ifelse(P6040 <= 6, 1, 0),
-      cat_educ    = ifelse(P6210 == 9, 0, P6210),
-      bin_occupied = ifelse(is.na(Oc), 0, 1)
-    ) |> 
-    select(id, Orden, bin_woman, bin_head, bin_minor, cat_educ, bin_occupied)
-}
-
-train_personas <- pre_process_personas(train_personas)
-test_personas  <- pre_process_personas(test_personas)
-
-# =====================================================
-# 5. Household-level variables derived from individuals
-# =====================================================
-# Aggregated characteristics from individuals at the household level:
-#   - num_women: number of women
-#   - num_minors: number of children under 6
-#   - cat_maxEduc: maximum education level in the household
-#   - num_occupied: number of employed persons
-#   - mean_educ: average education level
-#   - dep_ratio: economic dependency ratio (total persons / employed)
-
-# ----- Training -----
-train_personas_nivel_hogar <- train_personas |> 
-  group_by(id) |>
-  summarize(
-    num_women    = sum(bin_woman, na.rm = TRUE),
-    num_minors   = sum(bin_minor, na.rm = TRUE),
-    cat_maxEduc  = max(cat_educ, na.rm = TRUE),
-    num_occupied = sum(bin_occupied, na.rm = TRUE),
-    mean_educ    = mean(cat_educ, na.rm = TRUE),
-    dep_ratio    = ifelse(num_occupied > 0, n() / num_occupied, n())
-  ) |> 
-  ungroup()
-
-train_personas_hogar <- train_personas |> 
-  filter(bin_head == 1) |>
-  select(id, bin_woman, cat_educ, bin_occupied) |>
-  rename(
-    bin_headWoman    = bin_woman,
-    cat_educHead     = cat_educ,
-    bin_occupiedHead = bin_occupied
-  ) |>
-  left_join(train_personas_nivel_hogar, by = "id")
-
-# ----- Test -----
-test_personas_nivel_hogar <- test_personas |> 
-  group_by(id) |>
-  summarize(
-    num_women    = sum(bin_woman, na.rm = TRUE),
-    num_minors   = sum(bin_minor, na.rm = TRUE),
-    cat_maxEduc  = max(cat_educ, na.rm = TRUE),
-    num_occupied = sum(bin_occupied, na.rm = TRUE),
-    mean_educ    = mean(cat_educ, na.rm = TRUE),
-    dep_ratio    = ifelse(num_occupied > 0, n() / num_occupied, n())
-  ) |> 
-  ungroup()
-
-test_personas_hogar <- test_personas |> 
-  filter(bin_head == 1) |>
-  select(id, bin_woman, cat_educ, bin_occupied) |>
-  rename(
-    bin_headWoman    = bin_woman,
-    cat_educHead     = cat_educ,
-    bin_occupiedHead = bin_occupied
-  ) |>
-  left_join(test_personas_nivel_hogar, by = "id")
-
-# =====================================================
-# 6. Household-level economic variables
-# =====================================================
-# Economic characteristics of the household:
-#   - bin_rent: 1 if household rents the dwelling (P5090 == 3)
-#   - Ingpcug: per capita household income (P5000 / Npersug)
-#   - IPR: income-to-poverty-line ratio (economic capacity)
-
-train_hogares <- train_hogares |> 
-  mutate(
-    bin_rent = ifelse(P5090 == 3, 1, 0),
-    Ingpcug  = P5000 / Npersug,
-    IPR      = Ingpcug / Lp
-  ) |> 
-  select(id, Dominio, bin_rent, Ingpcug, IPR, Pobre)
-
-test_hogares <- test_hogares |> 
-  mutate(
-    bin_rent = ifelse(P5090 == 3, 1, 0),
-    Ingpcug  = P5000 / Npersug,
-    IPR      = Ingpcug / Lp
-  ) |> 
-  select(id, Dominio, bin_rent, Ingpcug, IPR)
-
-# =====================================================
-# 7. Merge household and individual data
-# =====================================================
-# Merge household-level data with person-level aggregates.
-# Format categorical variables.
-
-train <- train_hogares |> 
-  left_join(train_personas_hogar, by = "id") |>
-  select(-id) |> 
-  mutate(
-    Pobre   = factor(Pobre, levels = c(0, 1), labels = c("No", "Yes")),
-    Dominio = factor(Dominio),
-    cat_educHead = factor(cat_educHead, levels = c(0:6),
-                          labels = c("No information", "None", "Preschool", "Primary",
-                                     "Secondary", "High school", "University"))
-  )
-
-test <- test_hogares |> 
-  left_join(test_personas_hogar, by = "id") |> 
-  mutate(
-    Dominio = factor(Dominio),
-    cat_educHead = factor(cat_educHead, levels = c(0:6),
-                          labels = c("No information", "None", "Preschool", "Primary",
-                                     "Secondary", "High school", "University"))
-  )
-
-# =====================================================
-# 7. Function to calculate classification metrics
+# 3. Function to calculate classification metrics
 # =====================================================
 # Note: We use the complete training set (train) and test set (test) as provided
 # Model evaluation will be done through k-fold cross-validation on the training set
@@ -215,7 +72,7 @@ calculate_classification_metrics <- function(y_true, y_pred, model_name) {
 }
 
 # =====================================================
-# 8. CART Model Training
+# 4. CART Model Training
 # =====================================================
 
 # Control de entrenamiento con validación cruzada
@@ -224,11 +81,12 @@ fitControl <- trainControl(
   number = 10,
   classProbs = TRUE,
   summaryFunction = prSummary,  # Use precision-recall summary for imbalanced data
-  savePredictions = TRUE
+  savePredictions = TRUE,
+  sampling = "smote"
 )
 
 # =====================================================
-# 8.1) CART Model optimized by complexity parameter (cp)
+# 4.1) CART Model optimized by complexity parameter (cp)
 # =====================================================
 set.seed(2025)
 cart_complexity <- train(
@@ -237,7 +95,10 @@ cart_complexity <- train(
   method = "rpart",
   metric = "F",  # Optimize F1 score (better for imbalanced classes)
   trControl = fitControl,
-  tuneGrid = expand.grid(cp = seq(0.00001, 0.001, 0.00005))  # Test complexity parameters
+  tuneGrid = expand.grid(cp = seq(0.00001, 0.001, 0.00005)),  # Test complexity parameters
+  weights = ifelse(train$Pobre == "Yes",
+                1/mean(train$Pobre == "Yes"),
+                1/mean(train$Pobre == "No"))
 )
 
 print("=== CART MODEL OPTIMIZED BY COMPLEXITY PARAMETER ===")
@@ -246,7 +107,7 @@ print("Best model results:")
 print(cart_complexity$results[cart_complexity$results$cp == cart_complexity$bestTune$cp, ])
 
 # =====================================================
-# 8.2) CART Model optimized by maximum depth
+# 4.2) CART Model optimized by maximum depth
 # =====================================================
 set.seed(2025)
 cart_depth <- train(
@@ -256,6 +117,9 @@ cart_depth <- train(
   metric = "F",  # Optimize F1 score
   trControl = fitControl,
   tuneGrid = expand.grid(maxdepth = seq(1, 15, 1))  # Test depths from 1 to 15
+    weights = ifelse(train$Pobre == "Yes", 
+                  1/mean(train$Pobre == "Yes"),
+                  1/mean(train$Pobre == "No"))
 )
 
 print("=== CART MODEL OPTIMIZED BY MAXIMUM DEPTH ===")
@@ -264,7 +128,7 @@ print("Best model results:")
 print(cart_depth$results[cart_depth$results$maxdepth == cart_depth$bestTune$maxdepth, ])
 
 # =====================================================
-# 9. Model Comparison using Cross-Validation Results
+# 5. Model Comparison using Cross-Validation Results
 # =====================================================
 
 # Extract CV metrics from both models
@@ -288,7 +152,7 @@ mejor_cart <- metricas_cart[which.max(metricas_cart$F1_Score), ]
 cat("Best CART model:", mejor_cart$modelo, "with F1 Score =", mejor_cart$F1_Score, "\n")
 
 # =====================================================
-# 10. Visualize the best CART models
+# 6. Visualize the best CART models
 # =====================================================
 
 # Create views directory if it doesn't exist
@@ -341,7 +205,7 @@ cat("   - views/cart_complexity_poverty.png\n")
 cat("   - views/cart_depth_poverty.png\n")
 
 # =====================================================
-# 11. Best vs 1SE Rule Analysis (Cross-Validation Results)
+# 7. Best vs 1SE Rule Analysis (Cross-Validation Results)
 # =====================================================
 
 # Find best cp and 1SE cp from complexity model results
@@ -401,7 +265,7 @@ if(onese_cp_value > best_cp_value) {
 cat("Recommendation: Use BEST rule cp =", best_cp_value, "for maximum F1-Score\n")
 
 # =====================================================
-# 13. Generate predictions with 1SE rule
+# 8. Generate predictions with 1SE rule
 # =====================================================
 
 # Create CART model with 1SE cp value
@@ -428,7 +292,7 @@ cat("Preview of 1SE predictions:\n")
 print(head(predictSample_1se))
 
 # =====================================================
-# 14. Generate predictions with BEST rule (original)
+# 9. Generate predictions with BEST rule (original)
 # =====================================================
 
 # Choose best model from CV results for final predictions
@@ -447,7 +311,7 @@ if(metricas_cart$F1_Score[1] > metricas_cart$F1_Score[2]) {  # Complexity vs Dep
 }
 
 # =====================================================
-# 15. Generate final predictions on test set (BEST rule)
+# 10. Generate final predictions on test set (BEST rule)
 # =====================================================
 
 # Generate predictions on test set
@@ -459,7 +323,7 @@ predictSample <- test |>
 head(predictSample)
 
 # =====================================================
-# 16. Save BEST rule predictions with dynamic filename
+# 11. Save BEST rule predictions
 # =====================================================
 
 # Create filename based on best model and hyperparameters
@@ -489,3 +353,68 @@ cat("\n=== SUMMARY OF GENERATED FILES ===\n")
 cat("📁 1SE Rule predictions : ", filename_1se, " (cp = ", onese_cp_value, ")\n")
 cat("📁 BEST Rule predictions: ", filename, " (cp = ", best_cp_value, ")\n")
 cat("\n💡 Compare both files to see differences between simpler (1SE) vs optimal (BEST) models\n")
+
+// ...existing code...
+
+# =====================================================
+# 12. Save Depth-based predictions
+# =====================================================
+
+# Generate predictions using depth-optimized model
+predictSample_depth <- test |> 
+  mutate(pobre_lab = predict(cart_depth, newdata = test, type = "raw")) |>
+  mutate(pobre = ifelse(pobre_lab == "Yes", 1, 0)) |>
+  select(id, pobre)
+
+# Save depth-based predictions
+write.csv(predictSample_depth, "CART_depth.csv", row.names = FALSE)
+
+# Update final summary
+cat("\n=== SUMMARY OF GENERATED FILES ===\n")
+cat("📁 1SE Rule predictions : ", filename_1se, " (cp = ", onese_cp_value, ")\n")
+cat("📁 BEST Rule predictions: ", filename, " (cp = ", best_cp_value, ")\n")
+cat("📁 Depth predictions    : CART_depth.csv (maxdepth = ", cart_depth$bestTune$maxdepth, ")\n")
+cat("\n💡 Compare files to see differences between models\n")
+
+
+# =====================================================
+# Load libraries
+library(tidyverse)
+
+# Load predictions and show initial structure
+my_cart <- read.csv("CART_depth.csv")
+other_pred <- read.csv("LOGIT_cv10_thresh_0_32.csv")
+
+# Print structure to debug
+print("=== DATA STRUCTURE ===")
+print("CART predictions:")
+str(my_cart)
+print("\nOther predictions:")
+str(other_pred)
+
+# Ensure both dataframes have the same structure
+my_cart <- my_cart %>% 
+  select(id, pobre) %>%
+  rename(pobre_cart = pobre)
+
+other_pred <- other_pred %>%
+  select(id, pobre) %>%
+  rename(pobre_other = pobre)
+
+# Merge and compare
+comparison <- my_cart %>%
+  inner_join(other_pred, by = "id") %>%
+  mutate(match = pobre_cart == pobre_other)
+
+# Results
+print("\n=== COMPARACIÓN DE PREDICCIONES ===")
+print(paste("Total observaciones:", nrow(comparison)))
+print(paste("Predicciones iguales:", sum(comparison$match)))
+print(paste("Porcentaje de coincidencia:", round(mean(comparison$match) * 100, 2), "%"))
+
+# Contingency table
+print("\nTabla de contingencia:")
+print(table(CART = comparison$pobre_cart, LOGIT = comparison$pobre_other))
+
+# Save comparison results
+write.csv(comparison, "predictions_comparison.csv", row.names = FALSE)

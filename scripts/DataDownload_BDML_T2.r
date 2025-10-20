@@ -4,7 +4,7 @@
 # Clean variables and Libraries
 rm(list = ls())
 
-setwd("~/Desktop/GitHub/DATA BDSMT2")
+#setwd("~/Desktop/GitHub/DATA BDSMT2")
 
 require("pacman")
 p_load(tidyverse, 
@@ -23,10 +23,10 @@ p_load(tidyverse,
 ## -----------------------------------------------------
 ## 1) Import Databases
 ## -----------------------------------------------------
-train_personas <- read.csv("train_personas.csv")
-test_hogares  <- read.csv("test_hogares.csv")
-test_personas <- read.csv("test_personas.csv")
-train_hogares <- read.csv("train_hogares.csv")
+train_hogares  <- read.csv("data/train_hogares.csv")
+train_personas <- read.csv(unz("data/train_personas.csv.zip", "train_personas.csv"))
+test_hogares   <- read.csv("data/test_hogares.csv")
+test_personas  <- read.csv(unz("data/test_personas.csv.zip", "test_personas.csv"))
 
 ## -----------------------------------------------------
 ## 2) Rename Database

@@ -26,7 +26,7 @@ if (!require("rgl")) install.packages("rgl", dependencies = TRUE)
 # 2) Paths and data loading
 # -------------------------------
 # NOTE: Change this to your local path if needed.
-setwd("c:/Users/Asuar/OneDrive/Escritorio/Libros Clases/Economía/Big Data/Problem-Set-2-Predicting-Poverty")
+# setwd("c:/Users/Asuar/OneDrive/Escritorio/Libros Clases/Economía/Big Data/Problem-Set-2-Predicting-Poverty")
 
 train_households  <- read.csv("data/train_hogares.csv")
 train_persons     <- read.csv(unz("data/train_personas.csv.zip", "train_personas.csv"))

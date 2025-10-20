@@ -14,7 +14,7 @@ p_load(tidyverse, caret, rpart, rpart.plot, MLmetrics, Metrics, DMwR)
 # ------------------------
 # 2. Load data
 # ------------------------
-setwd("c:/Users/Asuar/OneDrive/Escritorio/Libros Clases/Economía/Big Data/Problem-Set-2-Predicting-Poverty")
+# setwd("c:/Users/Asuar/OneDrive/Escritorio/Libros Clases/Economía/Big Data/Problem-Set-2-Predicting-Poverty")
 # TODO: Update paths to your actual data location
 train_hogares  <- read.csv("data/train_hogares.csv")
 train_personas <- read.csv(unz("data/train_personas.csv.zip", "train_personas.csv"))  # Read from zip file

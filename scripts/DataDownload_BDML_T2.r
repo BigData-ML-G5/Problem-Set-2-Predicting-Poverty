@@ -13,7 +13,11 @@ p_load(tidyverse,
        readr,
        dplyr,
        skimr,
-       caret
+       caret,
+       ggplot2,
+       knitr,
+       kableExtra,
+       gridExtra
 )
 
 ## -----------------------------------------------------
@@ -591,8 +595,210 @@ test <- test |>
     head_educ_formal = as.factor(head_educ_formal),
     vulnerable_head = as.factor(vulnerable_head)
   )
+
 ## -----------------------------------------------------
-## 6) Standirize
+## 6) Descriptive Statistics
+## -----------------------------------------------------
+cat("Train:", nrow(train), "observaciones,", ncol(train), "variables\n")
+cat("Test: ", nrow(test), "observaciones,", ncol(test), "variables\n\n")
+
+poverty_table <- train %>%
+  count(Pobre) %>%
+  mutate(
+    Percentage = round(n / sum(n) * 100, 2),
+    `Cumulative Percentage` = round(cumsum(n) / sum(n) * 100, 2)
+  )
+
+kable(poverty_table, 
+      caption = "Table 1: Poverty Status Distribution in Training Dataset",
+      col.names = c("Poverty Status", "Frequency", "Percentage (%)", "Cumulative Percentage (%)"),
+      align = "lccc") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), 
+                full_width = FALSE) %>%
+  footnote(general = "Source: GEIH - Own elaboration. N = 154,393 households.")
+
+p1 <- ggplot(train, aes(x = Pobre, fill = Pobre)) +
+  geom_bar(color = "black", alpha = 0.7) +
+  geom_text(stat = "count", aes(label = paste0(after_stat(count), "\n(", 
+                                               round(after_stat(count)/sum(after_stat(count))*100, 1), "%)")), 
+            vjust = 1.5, color = "white", fontface = "bold") +
+  scale_fill_manual(values = c("No" = "#4A90E2", "Yes" = "#7ED321")) +
+  labs(title = "Figure 1: Household Distribution by Poverty Status",
+       subtitle = "Training Dataset",
+       x = "Poverty Status",
+       y = "Number of Households",
+       caption = "Source: GEIH - Own elaboration. N = 154,393 households.") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5))
+print(p1)
+
+domains_comp <- bind_rows(
+  train %>% count(Dominio) %>% mutate(Dataset = "Train"),
+  test %>% count(Dominio) %>% mutate(Dataset = "Test")
+) %>%
+  group_by(Dataset) %>%
+  mutate(Percentage = round(n / sum(n) * 100, 2)) %>%
+  ungroup()
+
+top5_domains <- train %>% 
+  count(Dominio) %>% 
+  arrange(desc(n)) %>% 
+  slice_head(n = 5) %>% 
+  pull(Dominio)
+
+domains_comp_top5 <- domains_comp %>%
+  filter(Dominio %in% top5_domains)
+
+domains_table_top5 <- domains_comp_top5 %>%
+  select(Dominio, Dataset, n, Percentage) %>%
+  pivot_wider(names_from = Dataset, 
+              values_from = c(n, Percentage),
+              names_sep = "_") %>%
+  select(Dominio, n_Train, Percentage_Train, n_Test, Percentage_Test) %>%
+  arrange(desc(n_Train))
+
+kable(domains_table_top5,
+      caption = "Table 2: Geographic Distribution - Top 5 Domains (Train vs Test Comparison)",
+      col.names = c("Domain", "Frequency", "Percentage (%)", "Frequency", "Percentage (%)"),
+      align = "lcccc") %>%
+  kable_styling(bootstrap_options = c("striped", "hover")) %>%
+  add_header_above(c(" " = 1, "Train" = 2, "Test" = 2)) %>%
+  footnote(general = "Source: GEIH - Top 5 domains by frequency. Similar distributions confirm representativeness.")
+
+top10_domains <- train %>% 
+  count(Dominio) %>% 
+  arrange(desc(n)) %>% 
+  slice_head(n = 10) %>% 
+  pull(Dominio)
+
+domains_comp_top10 <- domains_comp %>%
+  filter(Dominio %in% top10_domains)
+
+p2 <- ggplot(domains_comp_top10, aes(x = reorder(Dominio, n), y = Percentage, fill = Dataset)) +
+  geom_col(position = "dodge", alpha = 0.8) +
+  coord_flip() +
+  scale_fill_manual(values = c("Train" = "#4A90E2", "Test" = "#7ED321")) +
+  labs(title = "Figure 2: Geographic Distribution by Dataset - Top 10 Domains",
+       subtitle = "Train vs Test Comparison",
+       x = "Geographic Domain",
+       y = "Percentage (%)",
+       fill = "Dataset",
+       caption = "Source: GEIH - Top 10 domains by frequency.") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5))
+print(p2)
+
+education_comp <- bind_rows(
+  train %>% count(cat_educHead) %>% mutate(Dataset = "Train"),
+  test %>% count(cat_educHead) %>% mutate(Dataset = "Test")
+) %>%
+  group_by(Dataset) %>%
+  mutate(Percentage = round(n / sum(n) * 100, 2)) %>%
+  ungroup()
+
+p3 <- ggplot(education_comp, aes(x = reorder(cat_educHead, n), y = Percentage, fill = Dataset)) +
+  geom_col(position = "dodge", alpha = 0.8) +
+  coord_flip() +
+  scale_fill_manual(values = c("Train" = "#4A90E2", "Test" = "#7ED321")) +
+  labs(title = "Figure 3: Educational Level Distribution - Train vs Test Comparison",
+       x = "Educational Level",
+       y = "Percentage (%)",
+       fill = "Dataset",
+       caption = "Source: GEIH") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+print(p3)
+
+poverty_top10 <- train %>%
+  group_by(Dominio, Pobre) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(Dominio) %>%
+  mutate(
+    Total = sum(n),
+    Percentage = round(n / Total * 100, 2)
+  ) %>%
+  filter(Pobre == "Yes") %>%
+  ungroup() %>%  
+  arrange(desc(Percentage)) %>%
+  slice(1:10)
+
+p4 <- ggplot(poverty_top10, aes(x = reorder(Dominio, Percentage), y = Percentage)) +
+  geom_col(fill = "#4A90E2", alpha = 0.8, color = "black") +
+  geom_text(aes(label = paste0(Percentage, "%")), hjust = -0.1) +
+  coord_flip() +
+  labs(title = "Figure 4: Poverty Rate by Geographic Domain - Top 10 Highest Rates",
+       x = "Domain",
+       y = "Poverty Rate (%)",
+       caption = "Source: GEIH - Top 10 domains with highest poverty rates.") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+print(p4)
+
+summary(train$IPR)
+
+train_ipr_cat <- train %>%
+  mutate(IPR_category = case_when(
+    IPR <= 2.797e-06 ~ "Q1: Lowest",
+    IPR <= 3.643e-06 ~ "Q2: Low-Medium", 
+    IPR <= 5.899e-06 ~ "Q3: Medium-High",
+    TRUE ~ "Q4: Highest"
+  ))
+
+p5 <- ggplot(train_ipr_cat, aes(x = fct_inorder(IPR_category), fill = IPR_category)) +
+  geom_bar(alpha = 0.8, color = "black") +
+  geom_text(stat = "count", aes(label = paste0(after_stat(count), "\n(", 
+                                               round(after_stat(count)/sum(after_stat(count))*100, 1), "%)")), 
+            vjust = -0.5, fontface = "bold") +
+  scale_fill_manual(values = c("Q1: Lowest" = "#4A90E2", "Q2: Low-Medium" = "#7ED321", 
+                               "Q3: Medium-High" = "#CD853F", "Q4: Highest" = "#2E8B57")) +
+  labs(title = "Figure 5: Household Distribution by IPR Quartiles",
+       x = "IPR Category",
+       y = "Number of Households",
+       caption = "Source: GEIH - Categories based on quartiles.") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+print(p5)
+
+pct_above_10 <- round(mean(train$num_personas > 10) * 100, 2)
+
+p6 <- ggplot(train, aes(x = num_personas)) +
+  geom_histogram(bins = 15, fill = "#4A90E2", alpha = 0.7, color = "black") +
+  geom_vline(xintercept = 10, color = "red", linetype = "dashed", size = 1) +
+  annotate("text", x = 11, y = 30000, 
+           label = paste0(pct_above_10, "% of households\nhave >10 members"), 
+           color = "red", fontface = "bold", hjust = 0) +
+  labs(title = "Figure 6: Household Size Distribution",
+       x = "Number of Household Members",
+       y = "Frequency",
+       caption = "Source: GEIH") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+print(p6)
+
+combined_plots <- grid.arrange(
+  p1, p2, p3, p4, p6,
+  ncol = 2, 
+  nrow = 3,
+  top = "Figure 1-6: Comprehensive Descriptive Analysis of Household Characteristics"
+)
+
+setwd("~/Desktop/GitHub/Problem-Set-2-Predicting-Poverty/data")
+
+ggsave("descriptive_analysis_combined.png", 
+       combined_plots, 
+       width = 17,      
+       height = 14,     
+       dpi = 300,       
+       units = "in",
+       bg = "white")
+
+## -----------------------------------------------------
+## 7) Standirize
 ## -----------------------------------------------------
 # Variables to standardize as they are not categorical
 variables_to_standardize <- c(
@@ -620,11 +826,8 @@ train[variables_to_standardize] <- predict(preprocess_params, train[variables_to
 test[variables_to_standardize] <- predict(preprocess_params, test[variables_to_standardize])
 
 ## -----------------------------------------------------
-## 6) Export CSV
+## 8) Export CSV
 ## -----------------------------------------------------
-setwd("~/Desktop/GitHub/Problem-Set-2-Predicting-Poverty/data")
-
 # Exportar cada dataset
 write.csv(train, "train_clean.csv", row.names = FALSE)
 write.csv(test, "test_clean.csv", row.names = FALSE)
-

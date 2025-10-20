@@ -9,12 +9,21 @@ require("pacman")
 p_load(tidyverse, 
        caret,
        randomForest,
-       MLmetrics,
-       DMwR
+       MLmetrics
 )
 
 # ------------------------
-# 2. Random Forest Training
+# 2. Load data
+# ------------------------
+setwd("c:/Users/Asuar/OneDrive/Escritorio/Libros Clases/Economía/Big Data/Problem-Set-2-Predicting-Poverty")
+
+train_hogares  <- read.csv("data/train_hogares.csv")
+train_personas <- read.csv(unz("data/train_personas.csv.zip", "train_personas.csv"))
+test_hogares   <- read.csv("data/test_hogares.csv")
+test_personas  <- read.csv(unz("data/test_personas.csv.zip", "test_personas.csv"))
+
+# ------------------------
+# 3. Random Forest Training
 # ------------------------
 print("Starting Random Forest training...")
 
@@ -24,8 +33,7 @@ rf_control <- trainControl(
   number = 10,
   classProbs = TRUE,
   summaryFunction = prSummary,
-  savePredictions = TRUE,
-  sampling = "smote"
+  savePredictions = TRUE
 )
 
 # Hyperparameter grid
@@ -41,11 +49,8 @@ rf_model <- train(
   metric = "F",
   trControl = rf_control,
   tuneGrid = rf_grid,
-  ntree = 200,      # Número de árboles
-  importance = TRUE,  # Calcular importancia de variables
-  weights = ifelse(train$Pobre == "Yes",
-              1/mean(train$Pobre == "Yes"),
-              1/mean(train$Pobre == "No"))  # Ajustar pesos para clases desbalanceadas
+  ntree = 50,      # Número de árboles
+  importance = TRUE # Calcular importancia de variables
 )
 
 print("=== RANDOM FOREST RESULTS ===")
@@ -55,14 +60,14 @@ best_results <- rf_model$results[rf_model$results$mtry == rf_model$bestTune$mtry
 print(best_results)
 
 # ------------------------
-# 3. Variable Importance
+# 4. Variable Importance
 # ------------------------
 print("=== VARIABLE IMPORTANCE ===")
 importance_rf <- varImp(rf_model)
 print(importance_rf)
 
 # ------------------------
-# 4. Test Predictions
+# 5. Test Predictions
 # ------------------------
 print("Generating predictions on test set...")
 
@@ -81,7 +86,7 @@ predictSample <- test |>
 head(predictSample)
 
 # ------------------------
-# 5. Save predictions
+# 6. Save predictions
 # ------------------------
 # Save binary predictions (same format as other models)
 predictSample_binary <- predictSample |> select(id, pobre)
